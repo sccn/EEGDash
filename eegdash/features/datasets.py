@@ -615,9 +615,10 @@ class FeaturesConcatDataset(BaseConcatDataset):
         _, mean, var = _pooled_var(counts, means, variances, ddof, ddof_in=0)
         std = np.sqrt(var + eps)
         for ds in self.datasets:
-            ds.features.loc[:, self._numeric_columns()] = (
-                ds.features.loc[:, self._numeric_columns()] - mean
-            ) / std
+            numeric_cols = self._numeric_columns()
+            ds.features[numeric_cols] = (
+                (ds.features[numeric_cols] - mean) / std
+            ).astype("float32")
 
     @staticmethod
     def _enforce_inplace_operations(func_name: str, kwargs: dict):
