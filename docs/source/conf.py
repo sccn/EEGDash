@@ -22,8 +22,28 @@ import eegdash
 project = "EEG Dash"
 copyright = f"2025–{datetime.now(tz=timezone.utc).year}, {project} Developers"
 author = "Bruno Aristimunha and Arnaud Delorme"
-release = eegdash.__version__
-version = ".".join(release.split(".")[:2])
+#release = eegdash.__version__
+
+# --- version/release handling (robust to missing __version__)
+from importlib import metadata as _ilmd
+
+def _resolve_release():
+    # 1) Try package metadata (works if installed via `pip install -e .`)
+    try:
+        return _ilmd.version("eegdash")
+    except Exception:
+        pass
+    # 2) Fallback to attribute if present
+    try:
+        return getattr(eegdash, "__version__")
+    except Exception:
+        pass
+    # 3) Final fallback
+    return "0+local"
+
+release = _resolve_release()
+# Optional: a shorter "version" shown in some themes (major.minor.patch)
+version = ".".join(release.split(".")[:3]) if release else "0"
 
 
 # -- General configuration ---------------------------------------------------
@@ -47,7 +67,7 @@ extensions = [
     "sphinx_sitemap",
     "sphinx_copybutton",
     "sphinx.ext.graphviz",
-    "sphinx_time_estimation",
+    #"sphinx_time_estimation",
 ]
 
 templates_path = ["_templates"]
