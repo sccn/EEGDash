@@ -1,0 +1,130 @@
+name: Fetch OpenNeuro & NEMAR Datasets
+
+on:
+  pull_request:
+    branches:
+      - '**'
+  # schedule:
+  #   # Run weekly on Monday at 00:00 UTC
+  #   - cron: '0 0 * * 1'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  fetch-datasets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gql[requests] requests
+          pip install -e .
+
+      - name: Fetch OpenNeuro datasets
+        run: |
+          python scripts/ingestions/1_fetch_openneuro_datasets.py \
+            --page-size 100 \
+            --output consolidated/openneuro_datasets.json
+
+      - name: Fetch NEMAR GitHub repositories
+        run: |
+          python scripts/ingestions/1_fetch_github_organization.py \
+            --organization nemardatasets \
+            --output consolidated/nemardatasets_repos.json
+
+      - name: Verify OpenNeuro output
+        run: |
+          if [ -f consolidated/openneuro_datasets.json ]; then
+            echo "✓ OpenNeuro dataset file created successfully"
+            python -c "import json; data = json.load(open('consolidated/openneuro_datasets.json')); print(f'Total entries: {len(data)}'); modalities = set(d['modality'] for d in data); print(f'Modalities: {sorted(modalities)}')"
+          else
+            echo "✗ OpenNeuro dataset file not created"
+            exit 1
+          fi
+
+      - name: Verify NEMAR output
+        run: |
+          if [ -f consolidated/nemardatasets_repos.json ]; then
+            echo "✓ NEMAR repositories file created successfully"
+            python -c "import json; data = json.load(open('consolidated/nemardatasets_repos.json')); print(f'Total repositories: {len(data)}'); topics = set(); [topics.update(d.get('topics', [])) for d in data]; print(f'Topics: {sorted(topics) if topics else \"None\"}')"
+          else
+            echo "✗ NEMAR repositories file not created"
+            exit 1
+          fi
+
+      - name: Filter new OpenNeuro datasets
+        run: |
+          python scripts/ingestions/2_filter_new_datasets.py \
+            consolidated/openneuro_datasets.json
+
+      - name: Filter new NEMAR datasets
+        run: |
+          python scripts/ingestions/2_filter_new_datasets.py \
+            consolidated/nemardatasets_repos.json
+
+      - name: Verify filtered outputs
+        run: |
+          echo "📊 Filtering Results:"
+          echo ""
+          if [ -f consolidated/to_digest_openneuro_datasets.json ]; then
+            echo "✓ OpenNeuro filtered datasets created"
+            python -c "import json; data = json.load(open('consolidated/to_digest_openneuro_datasets.json')); print(f'  Datasets to digest: {len(data)}')"
+          else
+            echo "✗ OpenNeuro filtered datasets not created"
+            exit 1
+          fi
+          echo ""
+          if [ -f consolidated/to_digest_nemardatasets_repos.json ]; then
+            echo "✓ NEMAR filtered datasets created"
+            python -c "import json; data = json.load(open('consolidated/to_digest_nemardatasets_repos.json')); print(f'  Datasets to digest: {len(data)}')"
+          else
+            echo "✗ NEMAR filtered datasets not created"
+            exit 1
+          fi
+
+      - name: Commit and push changes if datasets updated
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Add all dataset files to staging
+          git add consolidated/openneuro_datasets.json
+          git add consolidated/nemardatasets_repos.json
+          git add consolidated/to_digest_openneuro_datasets.json
+          git add consolidated/to_digest_nemardatasets_repos.json
+          
+          # Check if there are actual changes (not just timestamp differences)
+          if git diff --cached --quiet; then
+            echo "No changes detected in dataset files, skipping commit"
+          else
+            echo "Changes detected, committing..."
+            git commit -m "chore: update OpenNeuro & NEMAR dataset listings and filtered to_digest files"
+            git push origin HEAD:${{ github.head_ref }}
+            echo "✓ Changes committed and pushed"
+          fi
+
+      - name: Upload artifacts for downstream jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataset-listings
+          path: |
+            consolidated/openneuro_datasets.json
+            consolidated/nemardatasets_repos.json
+            consolidated/to_digest_openneuro_datasets.json
+            consolidated/to_digest_nemardatasets_repos.json
+          retention-days: 7
